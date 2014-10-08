@@ -124,5 +124,5 @@ func saveRating(ratingRequest *RatingRequest) {
 
 func serve() {
 	http.HandleFunc("/", handler)
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":9010", nil)
 }
