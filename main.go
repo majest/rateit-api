@@ -15,6 +15,7 @@ import (
 var collection *db.Collection
 
 type RatingRequest struct {
+	Uid  string `json:"uid"`
 	Url  string `json:"url"`
 	Data Rating `json:"data"`
 }
