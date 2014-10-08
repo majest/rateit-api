@@ -8,7 +8,7 @@ import (
 )
 
 type Site struct {
-	Url         string         `json:"url"`
+	Url         string         `json:"-"`
 	TokenCounts map[string]int `json:"tokens"`
 	Title       string         `json:"title"`
 	Description string         `json:"description"`
@@ -73,8 +73,13 @@ func (s *Site) Parse() error {
 		switch tokenType {
 
 		case html.StartTagToken:
+
+			if token.Data == "meta" {
+				s.setMeta(token, "description", &s.Description)
+				s.setMeta(token, "keywords", &s.Keywords)
+			}
+
 			s.TokenCounts[token.Data]++
-			//fmt.Printf("-%s\n", token.Data)
 			previous = token.Data
 
 		case html.TextToken: // text between start and end tag
@@ -92,7 +97,34 @@ func (s *Site) Parse() error {
 			previous = ""
 		case html.SelfClosingTagToken: // <tag/>
 
+			if token.Data == "meta" {
+				s.setMeta(token, "description", &s.Description)
+				s.setMeta(token, "keywords", &s.Keywords)
+			}
 		}
 	}
 	return nil
+}
+
+// get token only if it matches the fieldname
+func (s *Site) checkTokenByAttribute(token html.Token, name string) *html.Token {
+	for _, v := range token.Attr {
+		if v.Key == "name" && v.Val == name {
+			return &token
+		}
+	}
+	return nil
+}
+
+// set meta content to specific placeholder
+func (s *Site) setMeta(token html.Token, fieldname string, placeholder *string) {
+	metaToken := s.checkTokenByAttribute(token, fieldname)
+	if metaToken != nil {
+		for _, v := range metaToken.Attr {
+			if v.Key == "content" {
+				*placeholder = v.Val
+				return
+			}
+		}
+	}
 }

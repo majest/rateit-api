@@ -6,6 +6,7 @@ import (
 	log "github.com/cihub/seelog"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
+	"reflect"
 	"strconv"
 	"time"
 )
@@ -26,9 +27,8 @@ func Close() {
 	session.Close()
 }
 
-var dbname = "driverBackfill-state"
-
 func Db() *mgo.Database {
+	dbname := "ratings"
 
 	if initialized == false {
 		InitSession()
@@ -42,9 +42,8 @@ func InitSession() {
 	if !initialized {
 
 		var err error
-
 		hostname := "localhost"
-
+		dbname := "ratings"
 		port := "27017"
 
 		log.Debugf("[DB] Initialising MongoDB session at %s, db: %s, port %s", hostname, dbname, port)
@@ -57,6 +56,7 @@ func InitSession() {
 		}
 
 		initialized = true
+
 	}
 
 }
@@ -109,6 +109,18 @@ func (self *Collection) getConstrains(params Data) (skip int, limit int) {
 
 	return skip, limit
 }
+
+func checkParamsForAdvancedUpdate(params Data) bool {
+
+	for k, _ := range params {
+		if k[:1] == "$" {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (self *Collection) getSort(params Data) string {
 	if sort, ok := params["sort"]; ok {
 		delete(params, "sort")
@@ -120,7 +132,7 @@ func (self *Collection) getSort(params Data) string {
 
 func (self *Collection) FindOne(params Data) (result Data, err error) {
 
-	//now := time.Now()
+	now := time.Now()
 	if params["_id"] != nil {
 		id := params["_id"]
 		str, ok := id.(string)
@@ -129,7 +141,7 @@ func (self *Collection) FindOne(params Data) (result Data, err error) {
 			log.Debugf("Could not convert to string fuck %s %v", id, id)
 		}
 
-		res := make(map[string]interface{})
+		res := make(Data)
 
 		if len(str) != 24 {
 			return nil, errors.New("[DB] Invalid Id")
@@ -138,38 +150,47 @@ func (self *Collection) FindOne(params Data) (result Data, err error) {
 		err = self.C().Find(bson.M{"_id": bson.ObjectIdHex(str)}).One(&res)
 
 		if res["_id"] != "" {
-			//  log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindOne : %+v - 1 result", time.Since(now), self.collectionName, params)
+			log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindOne : %+v - 1 result", time.Since(now), self.collectionName, params)
 		} else {
-			//  log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindOne : %+v - 0 results", time.Since(now), self.collectionName, params)
+			log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindOne : %+v - 0 results", time.Since(now), self.collectionName, params)
 		}
 
 		return res, err
 	}
 
-	err = self.C().Find(params).One(&result)
-	//log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindOne : %+v", time.Since(now), self.collectionName, params)
-	return result, err
+	res := make(Data)
+
+	err = self.C().Find(params).One(&res)
+
+	log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindOne : %+v", time.Since(now), self.collectionName, params)
+	return res, err
 }
 
-//var ids = []string{"53873eed3f75623cbf0005a8", "53873ef33f75623cbf00065d", "53873ef33f75623cbf000667", "53873ef43f75623cbf000671"}
+func (self *Collection) FindAll(params Data) (result []Data, err error) {
+	now := time.Now()
 
-func (self *Collection) FindAll() (result []Data, err error) {
+	params = self.replaceId(params)
+	skip, limit := self.getConstrains(params)
+	sort := self.getSort(params)
 
-	// bsonids := []bson.ObjectId{}
-	// for _, id := range ids {
-	//  bsonids = append(bsonids, bson.ObjectIdHex(id))
-	// }
+	if sort == "" {
+		sort = "+order"
+	}
 
-	//err = self.C().Find(Data{"_id": Data{"$in": bsonids}}).All(&result)
-	err = self.C().Find(nil).All(&result)
+	err = self.C().Find(params).Sort(sort).Skip(skip).Limit(limit).All(&result)
 
-	//log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindAll : %+v - %v results", time.Since(now), self.collectionName, params, len(result))
+	if len(result) > 500 {
+		return nil, errors.New("Results exceeds 500 records. Please use skip and limit")
+	}
+
+	log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.FindAll : %#v - %v results", time.Since(now), self.collectionName, params, len(result))
 	return result, err
 }
 
 func (self *Collection) FindAllSorted(params Data, sort string) (result []Data, err error) {
 
 	now := time.Now()
+	params = self.replaceId(params)
 	skip, limit := self.getConstrains(params)
 
 	err = self.C().Find(params).Sort(sort).Skip(skip).Limit(limit).All(&result)
@@ -192,30 +213,32 @@ func (self *Collection) Delete(id string) error {
 	return nil
 }
 
-func (self *Collection) SaveBy(search Data, params Data) error {
-	object := params
-	return self.C().Update(search, bson.M{"$set": object})
-}
+func (self *Collection) Save(params Data, dto Dto) error {
 
-func (self *Collection) Save(params Data) (result Data, err error) {
+	now := time.Now()
 
-	//now := time.Now()
-	result = Data{}
-	object := params
-
-	if object["_id"] != nil && object["_id"].(string) != "" {
+	var err error
+	if params["_id"] != nil {
 
 		// update
-		id := object["_id"].(string)
-		result["_id"] = id
-		delete(object, "_id")
+		id := params["_id"]
+		delete(params, "_id")
 
-		if len(id) != 24 {
-			return nil, errors.New("[DB] Invalid Id")
+		paramId, err := self.getId(id)
+
+		if err != nil {
+			return err
 		}
 
-		err = self.C().UpdateId(bson.ObjectIdHex(id), bson.M{"$set": object})
-		//log.Debugf("[DB] Saving by id: %s in %s", id, self.collectionName)
+		if dto != nil {
+			dto.Map(params)
+		}
+
+		if checkParamsForAdvancedUpdate(params) {
+			err = self.C().Update(paramId, params)
+		} else {
+			err = self.C().Update(paramId, bson.M{"$set": params})
+		}
 
 		if err != nil {
 			log.Errorf("[DB][Error] Could not update: %s", err.Error())
@@ -224,23 +247,86 @@ func (self *Collection) Save(params Data) (result Data, err error) {
 	} else {
 
 		// insert
-		idHex := bson.NewObjectId()
-		object["_id"] = idHex
-		id := idHex.Hex()
+		id := bson.NewObjectId()
+		params["_id"] = id
 
-		result["_id"] = id
-		err = self.C().Insert(object)
+		if dto != nil {
+			dto.Map(params)
+		}
 
-		//log.Debugf("[DB] Insert: %s in %s", object, self.collectionName)
+		err = self.C().Insert(params)
+		log.Debugf("[DB] Insert: %#s in %s", params, self.collectionName)
+
 	}
 
 	if err != nil {
 		log.Errorf("[DB] Could not save: %s", err.Error())
-		return nil, err
+		return err
 	}
 
-	//log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.Save : %+v", time.Since(now), self.collectionName, object)
-	return result, nil
+	log.Debugf("[DB] \x1b[31;1m%v\x1b[0m %s.Save", time.Since(now), self.collectionName)
+	return nil
+}
+
+func (self *Collection) replaceId(params Data) Data {
+	if params["_id"] != nil {
+
+		bsonId, err := self.getId(params["_id"])
+		if err != nil {
+			return params
+		}
+		params["_id"] = bsonId["_id"]
+	}
+	return params
+}
+
+// get id basing on type
+func (self *Collection) getId(value interface{}) (Data, error) {
+
+	if value != nil {
+
+		log.Debugf("[DB] Id is %s", reflect.TypeOf(value).Kind().String())
+
+		objectType := reflect.TypeOf(value).String()
+
+		// if it's a string just return id
+		if objectType == "string" {
+
+			if len(value.(string)) != 24 {
+				return nil, errors.New("[DB] Invalid Id")
+			}
+			return Data{"_id": bson.ObjectIdHex(value.(string))}, nil
+
+		} else if objectType == "map[string]interface {}" {
+
+			array := value.(map[string]interface{})
+			return self.getIdSet(array), nil
+
+		} else if objectType == "db.Data" {
+
+			array := value.(Data)
+			return self.getIdSet(array), nil
+		}
+
+	}
+
+	return nil, errors.New("[DB] Bad _id format")
+}
+
+// get the set of ids for Data
+func (self *Collection) getIdSet(array Data) Data {
+
+	params := []bson.ObjectId{}
+
+	if array["$in"] != nil {
+
+		for _, v := range array["$in"].([]string) {
+			params = append(params, bson.ObjectIdHex(v))
+		}
+		return Data{"_id": Data{"$in": params}}
+	}
+
+	return Data{}
 }
 
 func (self *Collection) Upsert(search, params Data) error {
