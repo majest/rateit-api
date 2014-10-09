@@ -42,6 +42,17 @@ func (el *Rating) ToMap() map[string]interface{} {
 	return mappedValues
 }
 
+type SiteEntries struct {
+	Group []SiteEntry `json:"group"`
+	Count int         `json:"count"`
+}
+
+func (g *SiteEntries) Map(object interface{}) {
+	bytes, _ := json.Marshal(object)
+	json.Unmarshal(bytes, &g.Group)
+	g.Count = len(g.Group)
+}
+
 type SiteEntry struct {
 	Id     string       `json:"_id,omitempty"`
 	Url    string       `json:"url,omitempty"`
@@ -65,6 +76,13 @@ func main() {
 	collection = db.NewCollection("sites")
 	db.InitSession()
 	serve()
+}
+
+func ratingsHandler(w http.ResponseWriter, r *http.Request) {
+	se := &SiteEntries{}
+	db.FindAll("ratings", se, nil)
+	resp, _ := json.Marshal(se)
+	w.Write(resp)
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -153,5 +171,7 @@ func saveRating(ratingRequest *RatingRequest) {
 
 func serve() {
 	http.HandleFunc("/", handler)
+	http.HandleFunc("/ratings", ratingsHandler)
+
 	http.ListenAndServe(":9010", nil)
 }
