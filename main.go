@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	//"fmt"
 	"bitbucket.org/arturgrabowski/go-service-layer/stats"
 	log "github.com/cihub/seelog"
@@ -18,6 +19,15 @@ type RatingRequest struct {
 	Uid  string `json:"uid"`
 	Url  string `json:"url"`
 	Data Rating `json:"data"`
+}
+
+type ErrorResponse struct {
+	Error   bool   `json:"error"`
+	Message string `json:"message"`
+}
+
+type Response struct {
+	Status string `json:"status"`
 }
 
 type Rating struct {
@@ -60,10 +70,15 @@ func main() {
 func handler(w http.ResponseWriter, r *http.Request) {
 	bodyRequest, err := ioutil.ReadAll(r.Body)
 
+	// set the initial header
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
 	if err != nil {
 		stats.Counter(1.0, "com.arnet.rateit.error.reading", 1)
-		log.Errorf("Error while reading body: %s", err.Error())
+		msg := fmt.Sprintf("Error while reading body: %s", err.Error())
+		log.Errorf(msg)
 		w.WriteHeader(http.StatusInternalServerError)
+		responseError(msg)
 		return
 	}
 
@@ -73,14 +88,24 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		stats.Counter(1.0, "com.arnet.rateit.error.unmarshal", 1)
-		log.Errorf("Error while decoding body: %s", err.Error())
+		msg := fmt.Sprintf("Error while decoding body: %s", err.Error())
 		w.WriteHeader(http.StatusBadRequest)
+		responseError(msg)
 		return
 	}
 
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Write([]byte("{\"ok\":1}"))
+	response()
 	go saveRating(ratingRequest)
+}
+
+func responseError(message string) []byte {
+	resp, _ := json.Marshal(&ErrorResponse{Error: true, Message: message})
+	return resp
+}
+
+func response() []byte {
+	resp, _ := json.Marshal(&Response{Status: "ok"})
+	return resp
 }
 
 func saveRating(ratingRequest *RatingRequest) {
