@@ -90,6 +90,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		stats.Counter(1.0, "com.arnet.rateit.error.unmarshal", 1)
 		msg := fmt.Sprintf("Error while decoding body: %s. Body: %s", err.Error(), bodyRequest)
 		w.WriteHeader(http.StatusBadRequest)
+		log.Errorf(msg)
 		responseError(msg)
 		return
 	}
