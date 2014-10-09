@@ -78,6 +78,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write([]byte("{\"ok\":1}"))
 	go saveRating(ratingRequest)
 }
 
